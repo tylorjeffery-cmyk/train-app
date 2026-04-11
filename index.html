@@ -175,11 +175,29 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 <body>
 <div class="app">
 
+<!-- SETUP -->
+<div id="screen-setup" class="screen">
+  <div class="scroll-body" style="display:flex;flex-direction:column;justify-content:center;min-height:100%;">
+    <div style="padding:2rem 0 1rem;">
+      <div style="font-size:28px;font-weight:700;color:var(--text);margin-bottom:8px;">Train</div>
+      <div style="font-size:15px;color:var(--text2);line-height:1.6;margin-bottom:2rem;">Your Upper/Lower workout tracker with AI coaching. One-time setup — your key is stored only on this device, never sent to GitHub.</div>
+      <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:8px;">Anthropic API key</div>
+      <input id="setup-key-input" type="password" placeholder="sk-ant-api03-..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" style="width:100%;padding:12px;border:0.5px solid var(--border2);border-radius:var(--radius);background:var(--surface2);color:var(--text);font-size:15px;margin-bottom:8px;-webkit-appearance:none;">
+      <div style="font-size:12px;color:var(--text3);margin-bottom:24px;line-height:1.5;">Get your key at console.anthropic.com → API Keys. Stored locally on your device only — used to power the AI coaching features.</div>
+      <button class="btn-primary" onclick="saveApiKey()">Save and continue →</button>
+      <button onclick="skipSetup()" style="width:100%;margin-top:12px;padding:12px;border:none;background:none;font-size:14px;color:var(--text3);cursor:pointer;">Skip — use without AI features</button>
+    </div>
+  </div>
+</div>
+
 <!-- HOME -->
-<div id="screen-home" class="screen active">
-  <div class="home-header">
-    <div class="home-greeting" id="home-greeting">Good morning</div>
-    <div class="home-sub">Upper/Lower · 4-day program</div>
+<div id="screen-home" class="screen">
+  <div class="home-header" style="display:flex;justify-content:space-between;align-items:flex-start;">
+    <div>
+      <div class="home-greeting" id="home-greeting">Good morning</div>
+      <div class="home-sub">Upper/Lower · 4-day program</div>
+    </div>
+    <button onclick="showApiSettings()" style="background:none;border:0.5px solid var(--border);border-radius:var(--radius-sm);padding:6px 10px;font-size:12px;color:var(--text3);cursor:pointer;margin-top:4px;">API key</button>
   </div>
   <div id="deload-banner-wrap"></div>
   <div class="stats-row" id="home-stats"></div>
@@ -273,6 +291,21 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 <div class="toast" id="toast"></div>
 
 <script>
+async function claudeAsk(systemPrompt,userPrompt){
+  const key=localStorage.getItem('wt-api-key');
+  if(!key)return null;
+  try{
+    const res=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:350,system:systemPrompt,messages:[{role:'user',content:userPrompt}]})
+    });
+    const data=await res.json();
+    if(data.error){console.error('Claude API error:',data.error.message);return null;}
+    return data.content?.find(b=>b.type==='text')?.text||null;
+  }catch(e){return null;}
+}
+
 const DAYS=[
   {id:'uppera',label:'Tuesday',title:'Upper A',type:'upper',bias:'Strength bias',restDefault:120,exercises:[
     {name:'Barbell bench press',sets:4,reps:'4–6',note:'Horizontal push · heavy'},
@@ -323,6 +356,42 @@ function initData(){
   sessionLog=load('wt-session')||{};
   history=load('wt-history')||[];
   deloadDismissed=load('wt-deload-dismissed')||false;
+  const hasKey=!!localStorage.getItem('wt-api-key');
+  const hasUsedBefore=load('wt-setup-done');
+  if(!hasUsedBefore&&!hasKey){
+    document.getElementById('screen-setup').classList.add('active');
+  }else{
+    showScreen('screen-home');
+  }
+}
+
+function saveApiKey(){
+  const val=document.getElementById('setup-key-input').value.trim();
+  if(!val||!val.startsWith('sk-ant-')){
+    showToast('Key should start with sk-ant-');return;
+  }
+  localStorage.setItem('wt-api-key',val);
+  save('wt-setup-done',true);
+  showToast('Key saved — you are good to go!');
+  setTimeout(()=>showScreen('screen-home'),800);
+}
+
+function skipSetup(){
+  save('wt-setup-done',true);
+  showScreen('screen-home');
+}
+
+function showApiSettings(){
+  const existing=localStorage.getItem('wt-api-key');
+  const newKey=prompt('Enter your Anthropic API key:',existing||'');
+  if(newKey===null)return;
+  if(newKey.trim()){
+    localStorage.setItem('wt-api-key',newKey.trim());
+    showToast('API key updated');
+  }else{
+    localStorage.removeItem('wt-api-key');
+    showToast('API key removed');
+  }
 }
 
 function showToast(msg){
@@ -412,14 +481,52 @@ async function openBrief(dayId){
   showScreen('screen-brief');
   const targets=buildTargets();
   renderTargets(targets);
-  const briefText=buildBriefText(targets);
+  const fallback=buildBriefText(targets);
+  const sys='You are a concise personal trainer. Plain text only — no markdown, asterisks, or bullet symbols. Max 160 words. Be direct, specific, and motivating.';
+  const prompt=buildAIPrompt(targets);
+  const aiText=await claudeAsk(sys,prompt);
+  const briefText=aiText||fallback;
   document.getElementById('brief-body').textContent=briefText;
   document.getElementById('brief-body').style.fontStyle='normal';
   document.getElementById('brief-body').style.opacity='1';
+  const firstEx=currentDay.exercises[0].name;
   document.getElementById('brief-actions').innerHTML=`
-    <button class="coach-pill" onclick="askChat('Give me a 5-minute warm-up for ${currentDay.title} (${currentDay.bias}). I am 49, fairly fit, fat loss and strength goals.')">Warm-up ↗</button>
-    <button class="coach-pill" onclick="askChat('Feeling a bit fatigued today. How should I adjust ${currentDay.title} intensity without losing progress?')">Feeling tired ↗</button>
-    <button class="coach-pill" onclick="askChat('What are the most important form cues for ${currentDay.exercises[0].name}?')">Form tips ↗</button>`;
+    <button class="coach-pill" id="pill-warmup" onclick="askCoach(this,'Give me a 5-minute warm-up for ${currentDay.title} (${currentDay.bias}). I am 49, fairly fit, fat loss and strength goals. Plain text, no markdown, max 120 words.')">Warm-up</button>
+    <button class="coach-pill" id="pill-tired" onclick="askCoach(this,'I am feeling fatigued today. How should I adjust ${currentDay.title} (${currentDay.bias}) intensity without losing progress? Plain text, no markdown, max 120 words.')">Feeling tired</button>
+    <button class="coach-pill" id="pill-form" onclick="askCoach(this,'Give me the 3 most important form cues for ${firstEx}. I am 49 years old. Plain text, no markdown, max 120 words.')">Form tips</button>`;
+}
+
+async function askCoach(btn,prompt){
+  const original=btn.textContent;
+  btn.textContent='...';
+  btn.disabled=true;
+  const sys='You are a concise personal trainer. Plain text only — no markdown, asterisks, or bullets. Max 120 words. Be direct and practical.';
+  const response=await claudeAsk(sys,prompt);
+  btn.textContent=original;
+  btn.disabled=false;
+  if(response){
+    const el=document.getElementById('brief-body');
+    el.textContent=response;
+    el.style.fontStyle='normal';
+    el.style.opacity='1';
+  }else{
+    showToast('Could not reach Claude — check API key');
+  }
+}
+
+function buildAIPrompt(targets){
+  const dayHist=history.filter(h=>h.dayId===currentDay.id);
+  let p=`I am about to train ${currentDay.title} (${currentDay.bias}). Exercises: ${currentDay.exercises.map(e=>e.name).join(', ')}. I am 49, fairly fit, goals are fat loss, strength, and muscle.\n\n`;
+  if(!dayHist.length){p+='This is my first session. Give me a focused briefing.';return p;}
+  p+=`Last session was ${Math.round((Date.now()-dayHist[dayHist.length-1].date)/86400000)} days ago.\n\n`;
+  if(targets.length){
+    p+='Performance data:\n';
+    targets.forEach(t=>{p+=`${t.name}: last ${t.latest.weight}lb×${t.latest.reps}, prev ${t.prev.weight}lb×${t.prev.reps}. Recommendation: ${t.rec}\n`;});
+    p+='\nBased on this, give me a specific pre-workout briefing: which exercises to push harder, which to hold, and one key focus for today.';
+  }else{
+    p+='Not enough history yet for data analysis. Give me a focused briefing for this session based on the bias and my goals.';
+  }
+  return p;
 }
 
 function buildTargets(){
@@ -490,6 +597,7 @@ function buildBriefText(targets){
 function askChat(prompt){
   alert('Copy this to Claude:\n\n'+prompt);
 }
+
 
 function beginWorkout(){
   document.getElementById('global-rest').value=currentDay.restDefault;
@@ -575,7 +683,7 @@ function renderExercises(){
           <button class="t-preset" onclick="startTimer(120)">2m</button>
           <button class="t-preset" onclick="startTimer(180)">3m</button>
         </div>
-        <div class="swap-row"><button class="swap-btn" onclick="doSwap('${ex.name.replace(/'/g,"\\'")}','${ex.note.replace(/'/g,"\\'")}')">Suggest alternate exercise →</button></div>
+        <div class="swap-row"><button class="swap-btn" onclick="doSwap('${ex.name.replace(/'/g,"\\'")}','${ex.note.replace(/'/g,"\\'")}',this)">Suggest alternate exercise →</button></div>
       </div>`;
     list.appendChild(card);
     renderSets(ei,ex,loggedSets);
@@ -634,10 +742,24 @@ function logSet(ei){
   document.getElementById(`body-${ei}`)?.classList.add('open');
 }
 
-function doSwap(name,note){
-  const msg=`Suggest 2–3 alternate exercises for "${name}" (${note}) in my Upper/Lower plan. Briefly explain why each works and any differences in muscle emphasis.`;
-  if(typeof sendPrompt==='function'){sendPrompt(msg);}
-  else{alert('Copy this to Claude.ai:\n\n'+msg);}
+async function doSwap(name,note,btnEl){
+  const msg=`Suggest 2–3 alternate exercises for "${name}" (${note}) in an Upper/Lower program for a 49-year-old with fat loss and strength goals. For each: name, why it's a good swap, muscle emphasis difference. Plain text only, no markdown, max 150 words.`;
+  if(btnEl){btnEl.textContent='Finding swaps...';btnEl.disabled=true;}
+  const sys='You are a concise personal trainer. Plain text only, no markdown or bullets. Max 150 words.';
+  const response=await claudeAsk(sys,msg);
+  if(btnEl){btnEl.textContent='Suggest alternate exercise →';btnEl.disabled=false;}
+  if(response){
+    const existing=btnEl?.parentElement?.querySelector('.swap-result');
+    if(existing)existing.remove();
+    const div=document.createElement('div');
+    div.className='swap-result';
+    div.style.cssText='margin-top:8px;padding:10px 12px;background:var(--surface2);border-radius:var(--radius-sm);font-size:13px;color:var(--text);line-height:1.6;';
+    div.textContent=response;
+    btnEl?.parentElement?.appendChild(div);
+  }else{
+    if(typeof sendPrompt==='function'){sendPrompt(msg);}
+    else{alert('Copy to Claude.ai:\n\n'+msg);}
+  }
 }
 
 function confirmEnd(){
@@ -734,7 +856,6 @@ function renderDeloadGuide(){
 }
 
 initData();
-renderHome();
 </script>
 </body>
 </html>
