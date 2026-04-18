@@ -861,58 +861,73 @@ function onDrop(e){
 function onDragEnd(){dragSrcEi=null;document.querySelectorAll('.ex-card').forEach(c=>c.classList.remove('dragging','drag-over'));}
 
 function attachTouchDrag(handle,card){
-  let startY=0,startX=0,clone=null,origIndex=-1,currentOverCard=null;
+  let clone=null,origIndex=-1,currentOverCard=null,offsetY=0,offsetX=0;
+
+  function cleanup(){
+    if(clone){clone.remove();clone=null;}
+    card.classList.remove('dragging');
+    document.querySelectorAll('.ex-card').forEach(c=>c.classList.remove('drag-over-top','drag-over-bottom'));
+    currentOverCard=null;
+  }
+
   handle.addEventListener('touchstart',e=>{
+    e.preventDefault();
     e.stopPropagation();
     const touch=e.touches[0];
-    startY=touch.clientY;startX=touch.clientX;
     origIndex=parseInt(card.dataset.ei);
-    card.classList.add('dragging');
-    clone=card.cloneNode(true);
     const rect=card.getBoundingClientRect();
-    clone.style.cssText=`position:fixed;top:${rect.top}px;left:${rect.left}px;width:${rect.width}px;z-index:999;opacity:0.9;pointer-events:none;border:1.5px solid var(--accent);border-radius:var(--rlg);background:var(--surface2);transition:none;`;
+    offsetY=touch.clientY-rect.top;
+    offsetX=touch.clientX-rect.left;
+    card.classList.add('dragging');
+    clone=card.cloneNode(false);
+    clone.innerHTML=card.querySelector('.ex-card-head').outerHTML;
+    clone.style.cssText=`position:fixed;top:${rect.top}px;left:${rect.left}px;width:${rect.width}px;z-index:999;opacity:0.92;pointer-events:none;border:1.5px solid var(--accent);border-radius:var(--rlg);background:var(--surface);box-shadow:0 8px 32px rgba(0,0,0,0.6);transition:none;`;
     document.body.appendChild(clone);
-  },{passive:true});
+  },{passive:false});
 
   handle.addEventListener('touchmove',e=>{
     if(!clone)return;
     e.preventDefault();
     const touch=e.touches[0];
-    const dy=touch.clientY-startY;
-    clone.style.transform=`translateY(${dy}px)`;
+    clone.style.top=(touch.clientY-offsetY)+'px';
+    clone.style.left=(touch.clientX-offsetX)+'px';
     document.querySelectorAll('.ex-card').forEach(c=>c.classList.remove('drag-over-top','drag-over-bottom'));
+    clone.style.pointerEvents='none';
     const el=document.elementFromPoint(touch.clientX,touch.clientY);
-    const overCard=el?.closest('.ex-card');
+    const overCard=el?.closest?.('.ex-card');
     if(overCard&&overCard!==card){
       const rect=overCard.getBoundingClientRect();
-      const mid=rect.top+rect.height/2;
-      overCard.classList.add(touch.clientY<mid?'drag-over-top':'drag-over-bottom');
+      overCard.classList.add(touch.clientY<rect.top+rect.height/2?'drag-over-top':'drag-over-bottom');
       currentOverCard=overCard;
-    }else currentOverCard=null;
+    }else{
+      currentOverCard=null;
+    }
   },{passive:false});
 
-  handle.addEventListener('touchend',e=>{
-    if(!clone)return;
-    clone.remove();clone=null;
-    card.classList.remove('dragging');
-    document.querySelectorAll('.ex-card').forEach(c=>c.classList.remove('drag-over-top','drag-over-bottom'));
-    if(currentOverCard){
-      const targetEi=parseInt(currentOverCard.dataset.ei);
+  function onTouchEnd(e){
+    if(!clone){cleanup();return;}
+    const over=currentOverCard;
+    cleanup();
+    if(over){
+      const targetEi=parseInt(over.dataset.ei);
       if(targetEi!==origIndex){
         const order=getOrderedExercises();
         const srcPos=order.indexOf(origIndex);
         const tgtPos=order.indexOf(targetEi);
         if(srcPos!==-1&&tgtPos!==-1){
-          order.splice(srcPos,1);order.splice(tgtPos,0,origIndex);
+          order.splice(srcPos,1);
+          order.splice(tgtPos,0,origIndex);
           exerciseOrder[currentDay.id]=order;
           save('wt-ex-order',exerciseOrder);
           renderExercises();
-          showToast('Order saved');
+          showToast('Order updated');
         }
       }
     }
-    currentOverCard=null;
-  },{passive:true});
+  }
+
+  handle.addEventListener('touchend',onTouchEnd,{passive:true});
+  handle.addEventListener('touchcancel',cleanup,{passive:true});
 }
 
 /* TIMER MODAL */
