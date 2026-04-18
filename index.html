@@ -112,12 +112,13 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 
 /* EXERCISE CARDS */
 .ex-card{background:var(--surface);border:0.5px solid var(--border);border-radius:var(--rlg);margin-bottom:10px;overflow:hidden;transition:opacity 0.2s;}
-.ex-card.dragging{opacity:0.5;border-color:var(--blue);}
-.ex-card.drag-over{border-color:var(--accent);border-style:dashed;}
+.ex-card.dragging{opacity:0.4;border-color:var(--accent);transform:scale(1.02);}
+.ex-card.drag-over-top{border-top:2px solid var(--accent);}
+.ex-card.drag-over-bottom{border-bottom:2px solid var(--accent);}
 .ex-card-head{display:flex;align-items:center;padding:13px 14px;gap:10px;}
-.drag-handle{display:flex;flex-direction:column;gap:3px;padding:4px 2px;cursor:grab;flex-shrink:0;opacity:0.4;}
-.drag-handle:active{cursor:grabbing;}
-.drag-handle span{display:block;width:16px;height:2px;background:var(--text2);border-radius:2px;}
+.drag-handle{display:flex;flex-direction:column;gap:3px;padding:8px 4px;cursor:grab;flex-shrink:0;opacity:0.35;touch-action:none;}
+.drag-handle:active{opacity:0.9;}
+.drag-handle span{display:block;width:18px;height:2px;background:var(--text2);border-radius:2px;}
 .ex-tap{flex:1;display:flex;align-items:center;gap:10px;cursor:pointer;min-width:0;}
 .ex-tap:active .ex-card-info{opacity:0.7;}
 .ex-accent-bar{width:3px;height:36px;border-radius:3px;flex-shrink:0;}
@@ -665,6 +666,8 @@ function renderExercises(){
     card.addEventListener('dragend',onDragEnd);
     list.appendChild(card);
     renderSets(ei,ex,loggedSets,activeAlt);
+    const handle=card.querySelector('.drag-handle');
+    if(handle)attachTouchDrag(handle,card);
   });
   const pct=total>0?Math.round((logged/total)*100):0;
   document.getElementById('progress-fill').style.width=pct+'%';
@@ -843,7 +846,7 @@ function getPR(dayId,ei,altIdx){
   return pr;
 }
 
-/* DRAG TO REORDER */
+/* TOUCH DRAG TO REORDER */
 function onDragStart(e){dragSrcEi=parseInt(this.dataset.ei);this.classList.add('dragging');}
 function onDragOver(e){e.preventDefault();this.classList.add('drag-over');}
 function onDrop(e){
@@ -851,16 +854,65 @@ function onDrop(e){
   const targetEi=parseInt(this.dataset.ei);
   if(dragSrcEi===null||dragSrcEi===targetEi)return;
   const order=getOrderedExercises();
-  const srcPos=order.indexOf(dragSrcEi);
-  const tgtPos=order.indexOf(targetEi);
+  const srcPos=order.indexOf(dragSrcEi);const tgtPos=order.indexOf(targetEi);
   order.splice(srcPos,1);order.splice(tgtPos,0,dragSrcEi);
-  exerciseOrder[currentDay.id]=order;
-  save('wt-ex-order',exerciseOrder);
-  renderExercises();
+  exerciseOrder[currentDay.id]=order;save('wt-ex-order',exerciseOrder);renderExercises();
 }
-function onDragEnd(){
-  dragSrcEi=null;
-  document.querySelectorAll('.ex-card').forEach(c=>c.classList.remove('dragging','drag-over'));
+function onDragEnd(){dragSrcEi=null;document.querySelectorAll('.ex-card').forEach(c=>c.classList.remove('dragging','drag-over'));}
+
+function attachTouchDrag(handle,card){
+  let startY=0,startX=0,clone=null,origIndex=-1,currentOverCard=null;
+  handle.addEventListener('touchstart',e=>{
+    e.stopPropagation();
+    const touch=e.touches[0];
+    startY=touch.clientY;startX=touch.clientX;
+    origIndex=parseInt(card.dataset.ei);
+    card.classList.add('dragging');
+    clone=card.cloneNode(true);
+    const rect=card.getBoundingClientRect();
+    clone.style.cssText=`position:fixed;top:${rect.top}px;left:${rect.left}px;width:${rect.width}px;z-index:999;opacity:0.9;pointer-events:none;border:1.5px solid var(--accent);border-radius:var(--rlg);background:var(--surface2);transition:none;`;
+    document.body.appendChild(clone);
+  },{passive:true});
+
+  handle.addEventListener('touchmove',e=>{
+    if(!clone)return;
+    e.preventDefault();
+    const touch=e.touches[0];
+    const dy=touch.clientY-startY;
+    clone.style.transform=`translateY(${dy}px)`;
+    document.querySelectorAll('.ex-card').forEach(c=>c.classList.remove('drag-over-top','drag-over-bottom'));
+    const el=document.elementFromPoint(touch.clientX,touch.clientY);
+    const overCard=el?.closest('.ex-card');
+    if(overCard&&overCard!==card){
+      const rect=overCard.getBoundingClientRect();
+      const mid=rect.top+rect.height/2;
+      overCard.classList.add(touch.clientY<mid?'drag-over-top':'drag-over-bottom');
+      currentOverCard=overCard;
+    }else currentOverCard=null;
+  },{passive:false});
+
+  handle.addEventListener('touchend',e=>{
+    if(!clone)return;
+    clone.remove();clone=null;
+    card.classList.remove('dragging');
+    document.querySelectorAll('.ex-card').forEach(c=>c.classList.remove('drag-over-top','drag-over-bottom'));
+    if(currentOverCard){
+      const targetEi=parseInt(currentOverCard.dataset.ei);
+      if(targetEi!==origIndex){
+        const order=getOrderedExercises();
+        const srcPos=order.indexOf(origIndex);
+        const tgtPos=order.indexOf(targetEi);
+        if(srcPos!==-1&&tgtPos!==-1){
+          order.splice(srcPos,1);order.splice(tgtPos,0,origIndex);
+          exerciseOrder[currentDay.id]=order;
+          save('wt-ex-order',exerciseOrder);
+          renderExercises();
+          showToast('Order saved');
+        }
+      }
+    }
+    currentOverCard=null;
+  },{passive:true});
 }
 
 /* TIMER MODAL */
