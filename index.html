@@ -419,11 +419,11 @@ async function claudeAsk(sys,prompt){
   try{
     const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
       headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:350,system:sys,messages:[{role:'user',content:prompt}]})});
+      body:JSON.stringify({model:'claude-sonnet-4-5',max_tokens:350,system:sys,messages:[{role:'user',content:prompt}]})});
     const d=await res.json();
-    if(d.error)return null;
+    if(d.error){showToast('API: '+d.error.message.slice(0,60));return null;}
     return d.content?.find(b=>b.type==='text')?.text||null;
-  }catch(e){return null;}
+  }catch(e){showToast('Network error: '+e.message.slice(0,50));return null;}
 }
 
 function initData(){
